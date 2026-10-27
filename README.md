@@ -1,111 +1,75 @@
-# Vulkan Neural Rendering --- Research Plan
+# VulkanNR
 
-**Status:** Initial investigation\
-**Target:** End of semester\
-**Reference:** [OpenDLSS-NR](https://github.com/maanHimself/OpenDLSS-NR)
+EC293 - Recreate DLSS: a DLSS 5-style neural rendering pipeline in **Vulkan compute, without CUDA**.
 
-## 1. Project goal
+Reference: [OpenDLSS-NR](https://github.com/maanHimself/OpenDLSS-NR) and the
+[NVIDIA DLSS 5 report](https://research.nvidia.com/labs/adlr/files/DLSS5_Report.pdf).
 
-The goal is to learn how neural rendering works and recreate a small,
-testable part of OpenDLSS-NR using **Vulkan compute shaders**, without
-depending on CUDA.
+**Status:** planning, awaiting supervisor approval. See [docs/project_plan.md](docs/project_plan.md).
 
-Rather than promising a complete reproduction immediately, this project
-will first build a working Vulkan prototype, then investigate how
-selected neural-network operations can be implemented and tested.
+## Goal
 
-## 2. Current status
+Learn how a real-time generative rendering network is built, and recreate a small, testable version of it with Vulkan
+compute shaders, checking every piece against a CPU reference.
 
--   Reviewed the OpenDLSS-NR repository and its build and weight
-    documentation.
--   Confirmed Windows 11 detects an **NVIDIA RTX 4070 Ti with 12 GB
-    VRAM** using `nvidia-smi`.
--   The Vulkan extension support has not yet been checked.
--   The project has not yet been built or run.
--   Compatible pretrained weights have not been obtained. The reference
-    repository does not include them.
+Three tracks: **A** own kernels with synthetic weights (the committed core), **B** optionally load the OpenDLSS-NR
+model format if suitably licensed weights are available, **C** optionally train a small model myself for comparison
+(expected to be far below the original). The weights are NVIDIA's proprietary data, so B needs the supervisor's
+approval and the project does not depend on it.
 
-**Important limitation:** Without the correct weights, the original
-trained network cannot be reproduced end-to-end. The project can still
-investigate Vulkan compute and test individual operations using small
-synthetic inputs.
+## What DLSS 5 does (short)
 
-## 3. Research questions
+It is a one-step, pixel-space diffusion transformer that re-renders a finished game frame to look more photographic.
+It takes the rendered frame, motion vectors, the previous output and artist controls, and runs causally, one frame at
+a time, with FP8 tensor-core math.
 
-1.  Can I create a reliable Vulkan compute pipeline on my hardware?
-2.  How do GPU results compare with a simple CPU implementation of the
-    same operation?
-3.  How do different workgroup sizes affect execution time?
-4.  Which parts of the reference implementation can realistically be
-    recreated during the semester?
+## Architecture
 
-## 4. Planned experiments
+Frame pipeline, implementation layers and the mapping to tracks are in [docs/architecture.md](docs/architecture.md).
 
-  -----------------------------------------------------------------------
-  Experiment              Method                  What I will measure
-  ----------------------- ----------------------- -----------------------
-  1\. Vulkan setup        Run a basic compute     Correct output and
-                          shader, such as vector  successful execution.
-                          addition.               
+## Plan
 
-  2\. CPU vs. GPU         Run the same operation  Output differences and
-                          on CPU and GPU with     execution time.
-                          several input sizes.    
+| Phase | Content |
+| --- | --- |
+| 0 (done) | Research, repo and template, architecture diagrams, plan |
+| A | Vulkan setup and a vector-add compute test (this template) |
+| B | Elementwise, preprocess and reprojection kernels; CPU vs GPU; workgroup sizes |
+| C | Tiled GEMM (fp32, fp16) |
+| D | Softmax, window attention, one transformer block |
+| E | Small U-net on an image (stretch) |
+| F | Cooperative matrices / FP8 (stretch) |
 
-  3\. Workgroup sizes     Repeat the GPU test     Execution time and any
-                          with different          correctness issues.
-                          workgroup sizes.        
+## Success criteria
 
-  4\. Neural-network      Implement one           Correctness against a
-  operation               manageable operation    CPU reference and
-                          from the reference      performance.
-                          code, if feasible.      
-  -----------------------------------------------------------------------
+- A working Vulkan compute prototype.
+- At least one transformer-style block checked against a CPU reference.
+- Timing results across sizes and workgroup sizes.
+- A written account of what could and could not be reproduced, including the effect of missing weights.
 
-These experiments use synthetic data and do **not** claim to reproduce
-the full neural renderer.
+## Build and run
 
-## 5. Next steps
+Needs the Vulkan SDK (for `glslc`), CMake 3.19+ and Visual Studio 2022.
 
-1.  Check the Vulkan extensions supported by the RTX 4070 Ti and
-    installed driver.
-2.  Build a minimal Vulkan compute program.
-3.  Validate its results against a CPU version.
-4.  Study the reference implementation and choose one operation to
-    recreate.
-5.  Record timings, results, screenshots, and problems in this README.
+```
+cmake -S . -B build
+cmake --build build --config Release
+build\Release\vulkannr.exe
+```
 
-The original project build instructions are available in the [upstream
-README](https://github.com/maanHimself/OpenDLSS-NR#readme). The full
-demo also depends on a compatible model and weights; see the [weight
-documentation](https://github.com/maanHimself/OpenDLSS-NR/blob/main/docs/weights.md).
+It prints the GPU, runs `vector_add` on the GPU and checks it against the CPU.
 
-## 6. Success criteria
+## Layout
 
-By the end of the semester, I aim to have:
+```
+docs/project_plan.md   plan, algorithms, evaluation, risks
+docs/architecture.md   pipeline and implementation diagrams
+shaders/               GLSL compute shaders
+src/main.cpp           minimal Vulkan compute host
+```
 
--   A working Vulkan compute prototype.
--   At least one operation tested against a CPU reference.
--   A small comparison of execution times across input sizes or
-    workgroup sizes.
--   A documented explanation of what could and could not be reproduced,
-    including the impact of missing model weights.
+## Progress log
 
-## 7. Progress log
-
-  -----------------------------------------------------------------------
-  Date                    Progress                Next step
-  ----------------------- ----------------------- -----------------------
-  2026-10-26              Reviewed the            Check Vulkan support
-                          repository; confirmed   and run the first
-                          the GPU is detected.    compute test.
-
-  -----------------------------------------------------------------------
-
-## References
-
--   [OpenDLSS-NR repository](https://github.com/maanHimself/OpenDLSS-NR)
--   [Weight
-    format](https://github.com/maanHimself/OpenDLSS-NR/blob/main/docs/weights.md)
--   [Vulkan documentation](https://docs.vulkan.org/)
--   [Vulkan Tutorial](https://vulkan-tutorial.com/)
+| Date | Progress | Next step |
+| --- | --- | --- |
+| 2026-10-26 | Reviewed the reference repo; GPU detected | Check Vulkan support, run the first compute test |
+| 2026-10-27 | Read the DLSS 5 report; wrote plan and template | Supervisor approval; run the template |
