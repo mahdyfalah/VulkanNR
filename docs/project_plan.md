@@ -1,107 +1,59 @@
-# Project plan: DLSS 5-style neural rendering in Vulkan compute (no CUDA)
+# Project plan
 
-Draft for discussion with the supervisor. Big picture only; details come after approval.
+EC293: recreate a DLSS 5-style neural rendering pipeline with Vulkan compute shaders, without CUDA.
+Draft for discussion with the supervisor. Background and diagrams are in [architecture.md](architecture.md).
 
-## 1. What DLSS 5 is (from the NVIDIA report)
+## 1. Goal
 
-DLSS 5 is not an upscaler. It is a **generative rendering stage** that runs after the renderer and re-renders the
-finished frame so it looks more photographic, while keeping the authored scene intact ("3D-guided neural
-rendering"). Key points of the report:
+Learn how a neural rendering network works on the GPU by writing the main parts myself in Vulkan compute, and check
+each part against a simple CPU version. I am not trying to match NVIDIA's output exactly.
 
-- **One-step, pixel-space diffusion**: one deterministic network evaluation per frame, no VAE/latent space.
-- **Conditioning**: the rendered RGB frame, engine motion vectors, carried temporal state (previous output), and
-  artist controls (appearance model, structure strength, tone strength, per-pixel masks, auto skin mask).
-- **Causal streaming**: one output per input frame, constant memory, no future frames.
-- **Backbone**: a transformer of about 154M parameters, with FP8 for most GEMMs and attention and FP16 for the
-  sensitive ones, tuned for tensor cores.
-- **Training-only supervision**: albedo, normal and lighting consistency keep the output faithful to the scene.
-- **Evaluation in the report**: blinded user study (realism), DINOv2 and LPIPS (content preservation), albedo,
-  normal and depth comparison (structure), plus speed and VRAM.
+## 2. What I will do
 
-The OpenDLSS-NR reference repository documents a concrete 71-block version of this backbone (a U-net of
-shifted-window attention blocks with a global ViT at the bottom). It is a good map of the algorithms involved, but
-it needs NVIDIA weights that are not available, so it cannot be reproduced end to end.
+Main work:
 
-## 2. Scope: three tracks
+- Write my own Vulkan kernels and a small transformer block.
+- Test them against a CPU version using random weights.
+- Load the OpenDLSS-NR model format and compare with it (needs NVIDIA's weights).
+- Train a small model in PyTorch, run it with my kernels and compare. It will look much worse than NVIDIA's, and
+  that is expected.
 
-| Track | What | Depends on weights? |
+The NVIDIA weights are proprietary and OpenDLSS-NR does not include them, so using them needs the supervisor's
+approval. The project works without them.
+
+## 3. Milestones
+
+| # | Milestone | Status |
 | --- | --- | --- |
-| A. Core (committed) | Self-written Vulkan compute kernels and blocks, checked against a CPU reference with synthetic weights | No |
-| B. Reference model (optional) | Load a model directory in the OpenDLSS-NR format and compare against its published behaviour | Yes, NVIDIA's weights |
-| C. Own small model (optional) | Train a small network in PyTorch, run it through the Vulkan kernels, compare with Track B if available | No |
+| 1 | Research and project setup (repo, template, plan) | Done |
+| 2 | Vulkan basics (GPU check, first compute shader) | Template written, not run yet |
+| 3 | In-depth architecture and study of the NVIDIA report | To do |
+| 4 | Recreate the OpenDLSS-NR results locally | Built and run with dummy weights; real output needs weights |
+| 5 | Start implementation (my own kernels, GPU vs CPU) | To do |
+| 6 | Final report | To do |
 
-Track A is the thesis. B and C only add comparison. Quality from C is expected to be far below the original; the point
-is a documented comparison, not matching NVIDIA.
+Later stretch goals, if there is time: a small U-net, cooperative matrices and FP8.
 
-**Weights and licensing.** The weights are NVIDIA's proprietary model data. OpenDLSS-NR ships none and states that
-the user is responsible for the licenses of whatever model data is used. Whether and how they may be obtained and used
-for coursework must be cleared with the supervisor before Track B starts. The project must not fail if they are
-unavailable.
+## 4. How I will check it
 
-**Out of scope:** bit-exact parity with NVIDIA unless Track B is approved, and any CUDA/PTX path.
+- **Correct:** the error against the CPU version for each kernel and block, using fixed random inputs.
+- **Fast:** milliseconds per kernel and per block for different sizes and workgroup sizes on the RTX 4070 Ti.
+- **Image quality:** only if I have trained weights (NVIDIA's or my own), using simple metrics such as PSNR and LPIPS.
+  With random weights the image is meaningless, so the results are about correct and fast compute.
 
-## 3. Pipeline to build
+## 5. Risks
 
-Full diagrams (frame pipeline, implementation layers, track mapping): [architecture.md](architecture.md).
-
-```
-rendered frame ─┐
-motion vectors ─┼─► preprocess ─► network (small transformer U-net) ─► composite ─► output
-previous output ┘   (tone proxy,      window attention + MLP blocks      (residual +
- controls/masks      noise, reproject)  pooling / upsampling / skips       temporal blend)
-```
-
-## 4. Algorithms and components
-
-| # | Component | Notes |
-| --- | --- | --- |
-| 1 | Elementwise ops (residual add, SiLU, scale) | warm-up kernels |
-| 2 | Preprocess: tone proxy, noise channels, conditioning channels | one fused kernel |
-| 3 | Reprojection of the previous output with motion vectors | bilinear sampling, history validity |
-| 4 | Tiled GEMM (fp32, then fp16) | the core of every block |
-| 5 | Normalisation and softmax | numerically careful reductions |
-| 6 | Window attention (8x8 windows, shifted windows) | window partition, QK^T, softmax, V |
-| 7 | MLP block with residual | two GEMMs plus activation |
-| 8 | Pool and upsample with skip connections | U-net structure |
-| 9 | Optional global attention at the lowest resolution | ViT stage |
-| 10 | Composite: residual plus temporal blend, tone and structure strength | final image |
-| 11 | Stretch: cooperative matrices (`VK_KHR_cooperative_matrix`), then FP8 | tensor-core speed without CUDA |
-
-## 5. Milestones
-
-| Phase | Deliverable | Status |
-| --- | --- | --- |
-| 0. Research and setup | Read the DLSS 5 report and OpenDLSS-NR docs; project repo and template (CMake, GLSL, minimal Vulkan host); architecture diagrams ([architecture.md](architecture.md)); plan | Done |
-| A. Setup | Vulkan device and extension check; vector-add compute test (template in this repo) |
-| B. Basics | Elementwise and preprocess kernels, CPU vs GPU comparison, workgroup-size study |
-| C. GEMM | Tiled GEMM, then fp16; compare with CPU and report GFLOPS |
-| D. Attention | Softmax, window attention, one full transformer block checked against a CPU reference |
-| E. Network | Small U-net with random or self-trained weights running on an image |
-| F. Stretch | Cooperative-matrix GEMM, FP8 experiments, optional temporal feedback demo |
-| G. Report | Results, limitations, comparison with OpenDLSS-NR's published numbers |
-
-Phases A to D are the commitment. E to F are stretch goals, depending on time.
-
-## 6. Evaluation
-
-- **Correctness**: max and mean error against a CPU reference per kernel and per block, using fixed random inputs.
-- **Performance**: milliseconds per kernel and per block across input sizes and workgroup sizes, on the RTX 4070 Ti.
-- **Image-level (only if weights exist)**: LPIPS and PSNR/SSIM between input and output, and a simple structure
-  check, in the spirit of the report's content-preservation metrics. A user study is out of scope.
-- **Honest limits**: without trained weights, output quality is not meaningful; the results are about correct
-  and fast Vulkan compute, not image quality.
-
-## 7. Risks
-
-| Risk | Mitigation |
+| Risk | What I do about it |
 | --- | --- |
-| NVIDIA weights unavailable or not licensed for this use | Track A needs none; Track C trains a tiny model |
-| Extension support (cooperative matrix, FP8) is driver dependent | Check early (phase A); core path uses plain compute |
-| Scope too large | Phases A to D are the minimum; the rest is optional |
-| Reference code is MIT but should not be copied | Write kernels independently; cite the repo where it guides the design |
+| No access to NVIDIA weights | The main work does not need them; I can train a small model instead |
+| Cooperative matrix / FP8 not supported by the driver | Check early; the main path uses plain compute |
+| Too much work | Keep to milestones 1 to 5; the rest is optional |
+| OpenDLSS-NR code should not be copied | Write my own kernels and cite the repo where it guided the design |
 
-## 8. Questions for the supervisor
+## 6. Questions
 
-1. Is a smaller, self-designed network acceptable instead of reproducing the 71-block model?
-2. May I use the NVIDIA weights for coursework (licensing), and is a small PyTorch-trained model acceptable for comparison?
-3. Does the stretch use of NVIDIA cooperative-matrix extensions count as "without CUDA"?
+1. May I use the NVIDIA weights for coursework (licensing), and is a small PyTorch-trained model acceptable for comparison?
+   OpenDLSS-NR is an independent reimplementation that was matched against NVIDIA's own runtime. Its README says it
+   is not affiliated with NVIDIA, contains no NVIDIA software or weights, grants no rights under NVIDIA's
+   intellectual property, and leaves licensing of the model data to the user. The code itself is MIT. Even if such
+   work may be legal, I want to discuss it before building on it.

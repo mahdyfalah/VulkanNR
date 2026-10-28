@@ -12,10 +12,10 @@ Reference: [OpenDLSS-NR](https://github.com/maanHimself/OpenDLSS-NR) and the
 Learn how a real-time generative rendering network is built, and recreate a small, testable version of it with Vulkan
 compute shaders, checking every piece against a CPU reference.
 
-Three tracks: **A** own kernels with synthetic weights (the committed core), **B** optionally load the OpenDLSS-NR
-model format if suitably licensed weights are available, **C** optionally train a small model myself for comparison
-(expected to be far below the original). The weights are NVIDIA's proprietary data, so B needs the supervisor's
-approval and the project does not depend on it.
+Main work: my own kernels, tested against a CPU version with random weights. Only if there is time and it is
+allowed: load the OpenDLSS-NR model format, or train a small model myself for comparison (it will be far below the
+original). The weights are NVIDIA's proprietary data, so using them needs the supervisor's approval; the project
+does not depend on them.
 
 ## What DLSS 5 does (short)
 
@@ -25,19 +25,18 @@ a time, with FP8 tensor-core math.
 
 ## Architecture
 
-Frame pipeline, implementation layers and the mapping to tracks are in [docs/architecture.md](docs/architecture.md).
+Frame pipeline and implementation layers are in [docs/architecture.md](docs/architecture.md).
 
 ## Plan
 
-| Phase | Content |
+| # | Milestone |
 | --- | --- |
-| 0 (done) | Research, repo and template, architecture diagrams, plan |
-| A | Vulkan setup and a vector-add compute test (this template) |
-| B | Elementwise, preprocess and reprojection kernels; CPU vs GPU; workgroup sizes |
-| C | Tiled GEMM (fp32, fp16) |
-| D | Softmax, window attention, one transformer block |
-| E | Small U-net on an image (stretch) |
-| F | Cooperative matrices / FP8 (stretch) |
+| 1 (done) | Research and project setup |
+| 2 | Vulkan basics |
+| 3 | In-depth architecture and study of the NVIDIA report |
+| 4 | Recreate the OpenDLSS-NR results locally |
+| 5 | Start implementation |
+| 6 | Final report |
 
 ## Success criteria
 
@@ -71,5 +70,5 @@ src/main.cpp           minimal Vulkan compute host
 
 | Date | Progress | Next step |
 | --- | --- | --- |
-| 2026-10-26 | Reviewed the reference repo; GPU detected | Check Vulkan support, run the first compute test |
-| 2026-10-27 | Read the DLSS 5 report; wrote plan and template | Supervisor approval; run the template |
+| 2026-10-12 | Reviewed the reference repo; GPU detected | Check Vulkan support, run the first compute test |
+| 2026-10-23 | Read the DLSS 5 report; wrote plan and template | Supervisor approval; run the template |

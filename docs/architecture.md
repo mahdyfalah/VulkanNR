@@ -1,81 +1,82 @@
 # Architecture
 
-Same-resolution neural rendering (not upscaling). Model structure follows the OpenDLSS-NR documentation; the DLSS 5 report describes the concept only.
+## What DLSS 5 is
+
+DLSS 5 is not an upscaler like older DLSS. It runs after the game has drawn a frame and re-renders that frame so it
+looks more photographic, while keeping the scene as the artists made it. The output has the same resolution as the
+input.
+
+What the NVIDIA report says, in short:
+
+- One neural network pass per frame (a one-step diffusion model working directly on pixels).
+- Inputs: the rendered frame, motion vectors, the previous output frame, and artist controls (style, structure and
+  tone strength, masks).
+- It only uses past frames, so it can run live in a game.
+- The network is a transformer of about 154M parameters, using FP8 math on tensor cores.
+- The report checks quality with a user study and image metrics (LPIPS, DINOv2).
+
+OpenDLSS-NR is an open Vulkan version of this network. Its docs describe a concrete layout (71 blocks); I use it as a
+guide for the structure, not as code to copy.
 
 ## 1. Frame pipeline
 
 ```mermaid
 flowchart TD
-    subgraph IN[Renderer inputs]
-        C[HDR colour]
-        MV[Motion vectors]
-        AC[Artistic controls]
-    end
+    C[Rendered frame] --> PRE
+    MV[Motion vectors] --> PRE
+    AC[Artist controls] --> PRE
+    HIST[(Previous output)] --> PRE
 
-    C --> PRE
-    MV --> PRE
-    AC --> PRE
-    HIST[(History: previous output)] --> PRE
-
-    PRE["Preprocess + reprojection<br/>proxy, reprojected history, 3 noise lanes,<br/>style/tone/conditioning, padded to field<br/>16 f32 lanes per pixel (motion is not a lane)"]
+    PRE["Preprocess<br/>tone-map the frame, add noise,<br/>reproject previous output"]
     PRE --> NET
 
-    subgraph NET[Neural network - Vulkan compute]
+    subgraph NET[Network - Vulkan compute]
         direction TB
-        ENC["Encoder<br/>shifted-window transformer blocks<br/>pool across levels"]
-        BOT["Bottleneck<br/>global ViT attention"]
-        DEC["Decoder<br/>upsample + skip merges<br/>shifted-window blocks"]
-        HEAD["Head: 4 ch/pixel<br/>RGB residual + blend logit"]
+        ENC["Encoder<br/>window attention blocks, shrink the image"]
+        BOT["Bottom<br/>global attention"]
+        DEC["Decoder<br/>grow the image again, merge with encoder"]
+        HEAD["Output: 3 colour values + 1 blend value per pixel"]
         ENC --> BOT --> DEC --> HEAD
         ENC -. skip connections .-> DEC
     end
 
-    HEAD --> COMP["Composite<br/>proxy + residual, blended with reprojected history"]
-    COMP --> OUT[Enhanced frame]
+    HEAD --> COMP["Composite<br/>add colour change, mix with previous output"]
+    COMP --> OUT[Final frame]
     COMP --> HIST
 ```
 
-## 2. Implementation layers
+Motion vectors are only used to reproject the previous output; they are not an input of the network itself.
+
+## 2. How I will build it
 
 ```mermaid
 flowchart TD
-    subgraph HOST[Host - C++ / Vulkan]
-        L["Load manifest + weights<br/>validate shapes and hashes"]
-        R["Create buffers, descriptors,<br/>pipelines, activation arena"]
-        G["Record model graph<br/>barriers between dispatches"]
+    subgraph HOST[C++ host]
+        L["Load weights"]
+        R["Create buffers and pipelines"]
+        G["Record the kernels in order with barriers"]
         L --> R --> G
     end
 
-    subgraph GPU[Compute kernels - GLSL to SPIR-V, no CUDA/PTX]
-        K1[Preprocess / format conversion]
-        K2[GEMM / projections]
-        K3[QKV + window attention + softmax]
-        K4[MLP + SiLU]
-        K5[Pool / upsample / skip merge]
+    subgraph GPU[GLSL compute shaders - no CUDA]
+        K1[Preprocess]
+        K2[Matrix multiply]
+        K3[Window attention + softmax]
+        K4[MLP]
+        K5[Pool / upsample / skip]
         K6[Global attention]
-        K7[Head + temporal composite]
+        K7[Output + composite]
     end
 
-    subgraph MEM[GPU memory]
-        W[(Weights)]
-        A[(Activation arena)]
-        H[(Frame history)]
-    end
+    MEM[(Weights, activations, previous frame)]
 
     G --> GPU
     GPU <--> MEM
 ```
 
-## 3. Mapping to project tracks
+## 3. Weights
 
-| Piece | Track A (own kernels, synthetic weights) | Track B (external weights) | Track C (own small model) |
-|---|---|---|---|
-| Kernels in section 2 | implement and verify vs CPU | reuse | reuse |
-| Weight loader | simple format | OpenDLSS-NR manifest | own format |
-| Output quality | not evaluated | compare to reference | expected poor |
+- My own kernels are tested with random weights against the CPU version.
+- If allowed, I can load the OpenDLSS-NR weights and compare with the reference.
+- If I train a small model myself, I can run it with the same kernels. Its image quality is expected to be poor.
 
-## Notes
-
-- Precision: the reference uses FP8 E4M3 activations with FP16 accumulation and needs cooperative-matrix and float8 extensions. Portable FP16/FP32 kernels come first; FP8 is a stretch goal.
-- A single-frame run is not the full temporal loop; history and reprojection must be implemented for temporal evaluation.
-- Claim only what is tested: no cross-vendor support without running on other GPUs.
